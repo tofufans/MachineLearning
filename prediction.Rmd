@@ -1,0 +1,141 @@
+
+### Predicting the class of performing weight lifting exercises
+
+
+####  Background
+This project is to predict the manner/class in which people did the exercise based on the provided data (http://groupware.les.inf.puc-rio.br/har). The data for this project recorded six participants who were asked to perform barbell lifts correctively and incorrectly in 5 different ways. Two datasets, training and testing, were provided. Each dataset contains recorded variables that we will use to predict the outcome 'classe' which represents the class. It is a factor variable(levels: A,B,C,D,E) only appears in training dataset. We are trying to build a model based on training dataset, verify on validation dataset, finally predict the 'classe' for each of the 20 observations in the testing dataset.
+
+```{r libraries,include=FALSE}
+    library(caret)
+    library(randomForest)
+    library(e1071)
+    library(ggplot2)    
+```
+#### Data Cleaning 
+1. load in raw data
+```{r data_load, include=TRUE}
+    raw_data <- read.csv("c:/DataScience_Machine/project/pml-training.csv")
+    testing <- read.csv("c:/DataScience_Machine/project/pml-testing.csv")
+    dim(raw_data) 
+```
+There are 19622 observations with 160 variables, 'classe' is the last one; after studied, we decided to take out column 1:7 because it won't affect the prediction
+
+2. take out column 1 to column 7
+```{r data_1, include=TRUE}
+    data1 <- raw_data[, -c(1:7)]
+    dim(data1)
+```
+Now, it is down to 19622 observations with 153 variables
+
+3. take care missing value and NA, first make all missing value as NA, then only take those columns with NA < 2000 (allows maximum 10% NA in 1 column)
+```{r data_2, include=TRUE}
+    data1[data1==""] <- NA
+    data2 <- data1[colSums(is.na(data1)) < 2000]
+    dim(data2)
+```
+Up to this point, it is down to 19622 observations with 53 variables
+
+
+#### Model 1: take out highly related variables, build model and predict
+1. check correlation between variables except with 'classe', find the highly correlated variables based on Cohen Effective size(cor > 0.5, absolute value)
+```{r correlation, include=TRUE}
+   cor_table <- cor(data2[,-dim(data2)[2]],) 
+   high_cor <- findCorrelation(cor_table, cutoff=0.5) 
+   length(high_cor) 
+```
+There are 31 variables highly correlated, take out those highly correlated variables and make our cleaned dataset(data)
+```{r dataset, include=TRUE}
+    data <- data2[, -high_cor]
+    dim(data)
+    names(data)
+```
+Here, we get our cleaned dataset: 19622 observations with 22 variables where 1 outcome variable 'classe' and 21 predictors
+
+2. make Training and Validation data set. For training purpose, we split the cleaned dataset(data) into two dataset: Training (60%) and Validation (40%)
+```{r data_split, include=TRUE}
+    inTrain <- createDataPartition(data$classe, p=0.6, list=FALSE)
+    training <- data[inTrain,]
+    validation <- data[-inTrain,]
+    dim(training)
+    dim(validation)
+```
+In training dataset, there are 11776 observations with 22 variables. In validation dataset, there are 7846 observations with 22 variables
+
+3. build Model from Training dataset & Predict on validation dataset using randomForest method 
+```{r model, include=TRUE}
+    set.seed(111)
+    modelFit <- train(classe~., method="rf", data=training, trControl=trainControl(method="cv"), importance=TRUE)
+    set.seed(222)
+    predict_valid <- predict(modelFit, newdata=validation)
+    confMat <- confusionMatrix(predict_valid, validation$classe)
+    confMat$table
+```
+From confusionMatrix, it shows that this model has accuracy of 97.81%, it means the out of sample error is 2.19% while apply on our validation dataset
+
+
+#### Model 2: not taking out highly related variables, instead, use PCA for building model and prediction
+1. make Training and Validation dataset. Here, we get our cleaned dataset(data2): 19622 observations with 53 variables where 1 outcome variable 'classe' and 52 predictors. For training purpose, we split the cleaned dataset(data2) into two dataset: Train (60%) and Valid (40%)
+```{r data_PCA, include=TRUE}
+    inTrain_PCA <- createDataPartition(data2$classe, p=0.6, list=FALSE)
+    train <- data2[inTrain_PCA,]
+    valid <- data2[-inTrain_PCA,]
+    dim(train)
+    dim(valid)
+    names(data2)
+```
+In training dataset, there are 11776 observations with 53 variables. In validation dataset, there are 7846 observations with 53 variables
+
+2.build Model from Training dataset & Predict on validation dataset using randomForest method with PCA
+```{r predict_PCA, include=TRUE}
+    set.seed(1111)
+    modFit <- train(classe~., method="rf", data=train, trControl=trainControl(method="cv"), Preprocess="pca",importance=TRUE)
+    set.seed(2222)
+    pre_valid <- predict(modFit, newdata=valid)
+    con_Mat <- confusionMatrix(pre_valid, valid$classe)
+    con_Mat$table
+```
+From confusionMatrix, it shows that this model has accuracy of 99.11%, that means the out of sample error is 0.89% while apply on our validation dataset
+
+    
+#### Select final model
+We built 2 models, one taking out highly correlated variables which ends up with 21 predictors; another not considering highly correlated variables but use PCA in building model which ends up with 52 predictors. After comparison, we choose  model2 (modFit) with PCA because it has a better accuracy 99.11% vs. 97.81% from  model1 (modelFit).
+
+
+#### Some analysis of final model(modFit):
+1. importance of predictors (top20)     2. predicted vs. truth on validation dataset 
+```{r imp_predictor, include=TRUE}
+    imp <- varImp(modFit, scale = FALSE)
+    plot(imp, top=20)
+```
+
+```{r analysis, include=TRUE}
+    valid$predRight <- pre_valid==valid$classe
+    qplot( pre_valid, classe, data=valid, color=predRight, main="predicted vs. true on validation dataset")
+```
+
+#### Apply on Testing dataset using final model (modFit)
+```{r predict_test, include=TRUE }
+    answers <- predict(modFit, newdata=testing)
+    print(answers)
+```
+Now, we save/write the answers in files
+```{r save_file, include=TRUE}
+    pml_write_files = function(x){
+        n = length(x)
+        for (i in 1:n){
+            filename = paste0("problem_id",i,".txt")
+            write.table(x[i],file=filename,quote=FALSE,row.name=FALSE,col.names=FALSE)
+        }
+    }
+    pml_write_files(answers)
+```
+
+
+#### Conclusion
+After trying 2 models, we selected the one with cleaned dataset (19622 observations of 53 variables), splited into training dataset (60%, 11776 observations of 53 variables: 1 outcome variable 'classe' and 52 predictors) and validation dataset (40%, 7846 observations of 53 variables: 1 outcome variable 'classe' and 52 predictors). We used randomForest algorithm with PCA to build model from the training dataset and do the prediction on the validation dataset. We got an accuracy of 99.11% and an out of sample error of 0.89%. We also used the prediction model to predict 20 different test cases(testing dataset) which got all the predictions correctly. 
+
+
+
+
+
+
